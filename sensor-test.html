@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thử cảm biến bằng điện thoại — port-shm</title>
+<link rel="stylesheet" href="./css/app.css?v=3">
+<style>
+  body { background: var(--paper); }
+  .st-wrap { max-width: 560px; margin: 0 auto; padding: 16px; }
+  .st-wrap h1 { font-size: 1.25rem; margin: .4rem 0 .2rem; }
+  .st-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+  .st-val { font-size: 1.5rem; font-weight: 600; }
+  .st-log { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .75rem; white-space: pre-wrap;
+            max-height: 260px; overflow: auto; background: var(--shoal); padding: .5rem; border-radius: 6px; }
+  .st-row { display: flex; gap: .5rem; flex-wrap: wrap; margin: .5rem 0; }
+  .st-row button { flex: 1 1 auto; }
+  .st-bar { height: 6px; background: var(--shoal); border-radius: 3px; overflow: hidden; }
+  .st-bar > div { height: 100%; width: 0; background: var(--channel); }
+  label.inline { display: flex; align-items: center; gap: .4rem; }
+  label.inline input { width: auto; }
+</style>
+</head>
+<body>
+<div class="st-wrap">
+  <h1>Thử cảm biến bằng điện thoại</h1>
+  <p class="small muted">Điện thoại đóng vai một gateway hiện trường: gia tốc kế gửi đoạn dao động (app tự tính phổ, rms, peak, freq),
+    góc nghiêng gửi vào cảm biến loại Nghiêng (kênh x, y). Chỉ dùng để thử nghiệm.</p>
+
+  <div class="panel">
+    <h3>1. Cấu hình</h3>
+    <label>Khoá API của gateway thử nghiệm
+      <input id="key" type="password" autocomplete="off" placeholder="shm_xxxxxxxx.…"></label>
+    <label class="inline small"><input id="remember" type="checkbox"> Nhớ khoá trên máy này (chỉ dùng máy cá nhân)</label>
+    <div class="st-grid">
+      <label>Mã gia tốc kế<input id="accCode" value="TEST-PHONE-ACC"></label>
+      <label>Mã cảm biến nghiêng<input id="tltCode" value="TEST-PHONE-TLT"></label>
+    </div>
+    <div class="st-grid">
+      <label>Mẫu mỗi đoạn dao động
+        <select id="nSamples"><option>1024</option><option selected>2048</option><option>4096</option></select></label>
+      <label>Gửi nghiêng mỗi (giây)<input id="tltEvery" type="number" min="10" value="60"></label>
+    </div>
+    <p class="small muted">Hai cảm biến phải được khai báo trước trong tab Cảm biến &amp; thiết bị: loại <b>Gia tốc kế</b> và loại <b>Nghiêng</b>,
+      gán cho đúng gateway của khoá này.</p>
+  </div>
+
+  <div class="panel">
+    <h3>2. Chạy</h3>
+    <div class="st-row">
+      <button class="primary" id="start" type="button">Bắt đầu</button>
+      <button id="stop" type="button" disabled>Dừng</button>
+    </div>
+    <label class="inline"><input id="offline" type="checkbox"> Giả lập mất mạng (giữ số liệu trong bộ đệm, không gửi)</label>
+    <div class="st-grid" style="margin-top:.6rem">
+      <div><div class="small muted">Gia tốc z (m/s²)</div><div class="st-val num" id="az">–</div></div>
+      <div><div class="small muted">Tần số lấy mẫu</div><div class="st-val num" id="fs">–</div></div>
+      <div><div class="small muted">Nghiêng x / y (°)</div><div class="st-val num" id="tilt">–</div></div>
+      <div><div class="small muted">Bộ đệm chờ gửi</div><div class="st-val num" id="queue">0</div></div>
+    </div>
+    <div class="small muted" style="margin-top:.5rem">Đang thu đoạn dao động</div>
+    <div class="st-bar"><div id="prog"></div></div>
+    <div class="st-row">
+      <button id="spike" type="button">Gửi nghiêng vượt ngưỡng (x = 5°)</button>
+      <button id="badkey" type="button">Thử khoá sai</button>
+    </div>
+    <p class="small muted">Gợi ý: để điện thoại nằm yên trên bàn, rồi gõ nhẹ đều lên bàn hoặc đặt cạnh máy giặt, quạt — đỉnh phổ sẽ thay đổi.
+      Giữ màn hình sáng trong khi thử.</p>
+  </div>
+
+  <div class="panel">
+    <h3>Nhật ký</h3>
+    <div class="st-log" id="log"></div>
+  </div>
+  <p class="small"><a href="./index.html">← Về app</a></p>
+</div>
+<script src="./js/config.js"></script>
+<script src="./js/sensor-test.js?v=1"></script>
+</body>
+</html>
