@@ -340,12 +340,13 @@
 
   function tileHtml(c) {
     const lvl = c.has_threshold ? c.level : -1;
-    const cls = c.stale ? "tile stale" : `tile tl-${lvl}`;
+    const evt = !c.interval_s;   // cảm biến theo sự kiện (cập tàu, va đệm…): không có nhịp gửi cố định
+    const cls = c.stale ? "tile stale" : `tile tl-${lvl}${evt ? " evt" : ""}`;
     return `<button type="button" class="${cls}" data-tile="${c.channel_id}" title="${esc(c.sensor)}/${esc(c.channel)} — ${c.has_threshold ? LEVEL[c.level] : "không có ngưỡng"}">
       <span class="tile-head"><span>${esc(c.sensor)}</span><span>${esc(c.channel)}</span></span>
       <span class="tile-val num">${esc(fmtNum(c.value, c.value === null ? 0 : Math.abs(c.value) >= 100 ? 1 : Math.abs(c.value) >= 10 ? 2 : 3))}<small> ${esc(unitLabel(c.unit))}</small></span>
       ${sparkSvg(live.spark[c.channel_id], c.has_threshold ? `sl-${c.level}` : "")}
-      <span class="tile-foot">${c.stale ? "Mất tín hiệu · " : ""}${esc(ago(c.ts))}${c.qc ? " · số liệu nghi ngờ" : ""}</span>
+      <span class="tile-foot">${c.stale ? "Mất tín hiệu · " : evt ? "Theo sự kiện · lần cuối " : ""}${esc(ago(c.ts))}${c.qc ? " · số liệu nghi ngờ" : ""}</span>
     </button>`;
   }
 
@@ -439,7 +440,7 @@
         <div id="liveGrid"></div>
         <aside class="panel live-side"><h3>Cảnh báo đang mở <span id="liveAlertCount" class="tag"></span></h3><ul id="liveAlerts" class="ticker"></ul></aside>
       </div>
-      <p class="small muted">Ô màu theo mức ngưỡng hiện tại của kênh (xám nhạt = kênh không có ngưỡng; viền đứt = mất tín hiệu). Đường nhỏ: trung bình giờ 24 giờ qua. Tự cập nhật ${isGuest() ? 30 : 10} giây/lần; bấm một ô để xem biểu đồ.</p>`;
+      <p class="small muted">Ô màu theo mức ngưỡng hiện tại của kênh (xám nhạt = kênh không có ngưỡng; viền đứt = mất tín hiệu; viền chấm, nền sọc = cảm biến theo sự kiện, chỉ có số liệu khi xảy ra sự kiện như tàu cập bến). Đường nhỏ: trung bình giờ 24 giờ qua. Tự cập nhật ${isGuest() ? 30 : 10} giây/lần; bấm một ô để xem biểu đồ.</p>`;
     $("#liveFilter").onchange = (e) => { live.filter = e.target.value; renderLiveGrid(); };
     $("#liveFull").onclick = () => {
       const el = document.documentElement;

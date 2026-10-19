@@ -180,3 +180,9 @@ label.btn:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
 .ticker { list-style: none; padding: 0; margin: 0; font-size: .85rem; }
 .ticker li { padding: .45rem 0; border-bottom: 1px solid var(--shoal); display: grid; gap: .1rem; }
 :fullscreen body, :fullscreen main { background: var(--paper); }
+
+/* cảm biến theo sự kiện: giá trị là lần ghi gần nhất, không phải số liệu đang chạy */
+.tile.evt { border-style: dotted; border-left-style: solid;
+  background: repeating-linear-gradient(135deg, var(--sheet) 0 8px, var(--shoal) 8px 9px); }
+.tile.evt .tile-val { color: var(--ink-2); }
+.tile.evt .tile-foot { font-style: italic; }
