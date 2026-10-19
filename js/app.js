@@ -18,8 +18,10 @@
   const lv = (n) => `<span class="lv lv-${Number(n) || 0}">${LEVEL[Number(n) || 0]}</span>`;
   const STATUS = { open: "Đang mở", acknowledged: "Đã xem", closed: "Đã đóng",
                    proposed: "Đề xuất", confirmed: "Đã xác nhận", rejected: "Không chấp nhận" };
-  const ROLE = { admin: "Quản trị", engineer: "Kỹ sư", operator: "Khai thác", viewer: "Xem" };
-  const RANK = { viewer: 0, operator: 1, engineer: 2, admin: 3 };
+  const ROLE = { admin: "Quản trị", engineer: "Kỹ sư", operator: "Khai thác", viewer: "Xem", guest: "Khách xem" };
+  const RANK = { guest: -1, viewer: 0, operator: 1, engineer: 2, admin: 3 };
+  const GUEST_TABS = ["dashboard", "overview", "wharf", "breakwater", "alerts"];
+  const isGuest = () => !!state.user && state.user.role === "guest";
 
   const state = { token: null, user: null, catalog: null, tab: "overview", sub: {},
                   structures: [], timer: null };
@@ -98,7 +100,15 @@
     state.token = null; state.user = null;
     try { sessionStorage.removeItem("shm_session"); } catch {}
     clearInterval(state.timer);
-    renderLogin();
+    if (typeof stopLive === "function") stopLive();
+    if (state.publicView) startGuest(); else renderLogin();
+  }
+
+  // Khách xem: không đăng nhập, chỉ đọc (máy chủ bật PUBLIC_VIEW)
+  async function startGuest() {
+    state.token = null;
+    state.user = { id: 0, email: "Khách", full_name: "Khách", role: "guest", can_approve: false };
+    await startApp();
   }
 
   function renderLogin() {
@@ -111,8 +121,11 @@
         <p class="muted small">Dùng tài khoản do quản trị hệ thống cấp.</p>
         <label>Email<input name="email" type="email" autocomplete="username" required></label>
         <label>Mật khẩu<input name="password" type="password" autocomplete="current-password" required></label>
-        <div class="actions"><button class="primary" type="submit">Đăng nhập</button></div>
+        <div class="actions"><button class="primary" type="submit">Đăng nhập</button>
+          ${state.publicView ? `<button type="button" id="asGuest">Xem không cần đăng nhập</button>` : ""}</div>
       </form>`;
+    const g = $("#asGuest");
+    if (g) g.onclick = () => startGuest();
     $("#loginForm").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const f = new FormData(ev.target);
@@ -137,7 +150,7 @@
 
   function renderTabs() {
     const nav = $("#tabs");
-    nav.innerHTML = TABS.filter(([k]) => k !== "admin" || can("admin")).map(([k, name]) =>
+    nav.innerHTML = TABS.filter(([k]) => (k !== "admin" || can("admin")) && (!isGuest() || GUEST_TABS.includes(k))).map(([k, name]) =>
       `<button role="tab" type="button" data-tab="${k}" aria-selected="${state.tab === k}">${esc(name)}</button>`).join("");
     nav.classList.remove("hidden");
     nav.onclick = (ev) => {
@@ -151,8 +164,10 @@
 
   async function startApp() {
     $("#logout").classList.remove("hidden");
-    $("#who").textContent = `${state.user.email} · ${ROLE[state.user.role] || state.user.role}`;
+    $("#logout").textContent = isGuest() ? "Đăng nhập" : "Đăng xuất";
+    $("#who").textContent = isGuest() ? "Khách xem · chỉ đọc" : `${state.user.email} · ${ROLE[state.user.role] || state.user.role}`;
     try { state.tab = localStorage.getItem("shm_tab") || "dashboard"; } catch {}
+    if (isGuest() && !GUEST_TABS.includes(state.tab)) state.tab = "dashboard";
     try {
       state.catalog = await apiCall("/api/catalog");
       state.structures = await apiCall("/api/structures");
@@ -424,7 +439,7 @@
         <div id="liveGrid"></div>
         <aside class="panel live-side"><h3>Cảnh báo đang mở <span id="liveAlertCount" class="tag"></span></h3><ul id="liveAlerts" class="ticker"></ul></aside>
       </div>
-      <p class="small muted">Ô màu theo mức ngưỡng hiện tại của kênh (xám nhạt = kênh không có ngưỡng; viền đứt = mất tín hiệu). Đường nhỏ: trung bình giờ 24 giờ qua. Tự cập nhật 10 giây/lần; bấm một ô để xem biểu đồ.</p>`;
+      <p class="small muted">Ô màu theo mức ngưỡng hiện tại của kênh (xám nhạt = kênh không có ngưỡng; viền đứt = mất tín hiệu). Đường nhỏ: trung bình giờ 24 giờ qua. Tự cập nhật ${isGuest() ? 30 : 10} giây/lần; bấm một ô để xem biểu đồ.</p>`;
     $("#liveFilter").onchange = (e) => { live.filter = e.target.value; renderLiveGrid(); };
     $("#liveFull").onclick = () => {
       const el = document.documentElement;
@@ -433,7 +448,9 @@
     live.since = null;
     await Promise.all([pollLive(true), loadSpark()]);
     let tick = 0;   // 10 giây/lần lấy phần thay đổi; mỗi phút lấy lại toàn bộ (mức ngưỡng, số liệu gửi bù)
-    live.timer = setInterval(() => { if (!document.hidden && state.tab === "dashboard") pollLive(++tick % 6 === 0); }, 10000);
+    // khách: 30 giây/lần (tiết kiệm lượt gọi qua Worker dùng chung), người đăng nhập: 10 giây/lần
+    const every = isGuest() ? 30000 : 10000, fullEvery = isGuest() ? 2 : 6;
+    live.timer = setInterval(() => { if (!document.hidden && state.tab === "dashboard") pollLive(++tick % fullEvery === 0); }, every);
     live.sparkTimer = setInterval(() => { if (!document.hidden && state.tab === "dashboard") loadSpark(); }, 300000);
   }
 
@@ -685,7 +702,7 @@
         ${eta ? `<ul class="small">${eta}</ul>` : ""}
         <p class="small muted">${esc((an.trend.notes || []).join(" "))}</p>
         <div class="actions"><button type="button" id="fcBtn" aria-pressed="${!!sub.forecast}">Dự báo 7 ngày</button>
-          ${sub.group === "breakwater" ? `<button type="button" id="stormBtn">Kịch bản bão</button>` : ""}</div>
+          ${sub.group === "breakwater" && !isGuest() ? `<button type="button" id="stormBtn">Kịch bản bão</button>` : ""}</div>
         <div id="fcBox"></div><div id="stormBox"></div>`;
       if (sub.forecast) {
         try {
@@ -1228,19 +1245,32 @@
     });
   }
 
+  // Máy chủ chính hoạt động lại (config.js phát sự kiện) → cập nhật nhãn, ẩn băng dự phòng.
+  window.addEventListener("ose-backend-change", async () => {
+    $("#backend").textContent = await backendLabel();
+    showDegraded(false);
+    toast("Đã kết nối lại máy chủ chính");
+    if (state.user && state.tab === "dashboard") pollLive(true);
+  });
+
   // ============================================================ khởi động
   async function boot() {
-    $("#logout").onclick = logout;
+    $("#logout").onclick = () => {
+      if (isGuest()) { clearInterval(state.timer); if (typeof stopLive === "function") stopLive(); state.user = null; renderLogin(); }
+      else logout();
+    };
     $("#backend").textContent = await backendLabel();
     try {
       const h = await apiCall("/api/health");
       showDegraded(h.mode === "degraded");
+      state.publicView = !!h.public_view;
     } catch (e) { $("#backend").textContent = "Không kết nối được máy chủ"; }
     loadSession();
     if (state.token) {
       try { state.user = await apiCall("/api/auth/me"); saveSession(); await startApp(); return; }
       catch { /* hết hạn → đăng nhập lại */ }
     }
+    if (state.publicView) { await startGuest(); return; }
     renderLogin();
   }
   boot();

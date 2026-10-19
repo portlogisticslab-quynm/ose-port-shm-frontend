@@ -41,14 +41,30 @@
 
     auto = true;
     const cached = recalled();
-    if (cached) return Promise.resolve(set(BACKENDS[cached]));
+    if (cached) { if (cached === "render") watchHome(); return Promise.resolve(set(BACKENDS[cached])); }
     set(BACKENDS.home);
     return (async () => {
-      if (await alive(BACKENDS.home, 4000)) { remember("home"); return BACKENDS.home; }
+      // thử hai lần (Tunnel/Worker đôi khi chậm ở lần gọi đầu)
+      if (await alive(BACKENDS.home, 8000) || await alive(BACKENDS.home, 8000)) { remember("home"); return BACKENDS.home; }
       console.warn("[OSE] Máy chủ chính không phản hồi, chuyển sang Render");
       remember("render");
+      watchHome();
       return set(BACKENDS.render);
     })();
+  }
+
+  // Đang ở Render: mỗi 60 giây kiểm tra máy chủ chính, có lại thì tự quay về.
+  let watching = null;
+  function watchHome() {
+    if (watching || !auto) return;
+    watching = setInterval(async () => {
+      if (document.hidden || !(await alive(BACKENDS.home, 8000))) return;
+      clearInterval(watching); watching = null;
+      remember("home");
+      window.OSE_API_READY = Promise.resolve(set(BACKENDS.home));
+      console.info("[OSE] Máy chủ chính đã hoạt động lại");
+      window.dispatchEvent(new CustomEvent("ose-backend-change", { detail: { base: BACKENDS.home, name: "home" } }));
+    }, 60000);
   }
 
   window.OSE_API_READY = resolve();
@@ -66,6 +82,7 @@
     console.warn("[OSE] Máy chủ chính mất kết nối, chuyển sang Render");
     remember("render");
     window.OSE_API_READY = Promise.resolve(set(BACKENDS.render));
+    watchHome();
     return fetch(BACKENDS.render + path, options);
   };
 })();
