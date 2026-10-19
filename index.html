@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quan trắc công trình cảng</title>
+  <meta name="description" content="Quan trắc trực tuyến công trình bến và đê chắn sóng: số liệu cảm biến, cảnh báo và khuyến cáo khai thác.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./css/app.css?v=3">
+</head>
+<body>
+  <div id="degraded" class="banner degraded hidden" role="status">
+    Máy chủ chính mất kết nối – số liệu tạm thời không cập nhật. Thiết bị hiện trường đang giữ số liệu để gửi bù.
+  </div>
+  <header class="topbar">
+    <h1>Quan trắc công trình cảng</h1>
+    <span class="backend" id="backend"></span>
+    <span class="spacer"></span>
+    <span id="who" class="small"></span>
+    <button id="logout" class="hidden" type="button">Đăng xuất</button>
+  </header>
+  <nav class="tabs hidden" id="tabs" role="tablist" aria-label="Chức năng"></nav>
+  <main id="view" tabindex="-1"></main>
+  <div id="toast" class="toast hidden" role="alert"></div>
+  <script src="./js/config.js?v=3"></script>
+  <script src="./js/app.js?v=3"></script>
+</body>
+</html>
