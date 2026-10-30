@@ -20,7 +20,7 @@
                    proposed: "Đề xuất", confirmed: "Đã xác nhận", rejected: "Không chấp nhận" };
   const ROLE = { admin: "Quản trị", engineer: "Kỹ sư", operator: "Khai thác", viewer: "Xem", guest: "Khách xem" };
   const RANK = { guest: -1, viewer: 0, operator: 1, engineer: 2, admin: 3 };
-  const GUEST_TABS = ["dashboard", "overview", "wharf", "breakwater", "alerts"];
+  const GUEST_TABS = ["dashboard", "overview", "wharf", "breakwater", "alerts", "berthing"];
   const isGuest = () => !!state.user && state.user.role === "guest";
 
   const state = { token: null, user: null, catalog: null, tab: "overview", sub: {},
@@ -100,6 +100,7 @@
     state.token = null; state.user = null;
     try { sessionStorage.removeItem("shm_session"); } catch {}
     clearInterval(state.timer);
+    stopBerthing();
     if (typeof stopLive === "function") stopLive();
     if (state.publicView) startGuest(); else renderLogin();
   }
@@ -144,6 +145,7 @@
   const TABS = [
     ["dashboard", "Dashboard trực tuyến"], ["overview", "Tổng quan cảng"], ["wharf", "Công trình bến"], ["breakwater", "Đê chắn sóng"],
     ["sensors", "Cảm biến & thiết bị"], ["alerts", "Cảnh báo & khuyến cáo"],
+    ["berthing", "Dự báo cập tàu (mô phỏng)"],
     ["surveys", "Khảo sát định kỳ"], ["rules", "Ngưỡng & quy tắc"],
     ["reports", "Báo cáo & hồ sơ"], ["admin", "Quản trị"],
   ];
@@ -182,19 +184,93 @@
 
   async function route(silent = false) {
     if (state.tab !== "dashboard") stopLive();
+    if (state.tab !== "berthing") stopBerthing();
     const v = $("#view");
     if (!silent) v.innerHTML = `<p class="muted">Đang tải…</p>`;
     try {
       const fn = { dashboard: viewDashboard, overview: viewOverview, wharf: () => viewGroup("wharf"),
                    breakwater: () => viewGroup("breakwater"), sensors: viewSensors,
                    alerts: viewAlerts, surveys: viewSurveys, rules: viewRules,
-                   reports: viewReports, admin: viewAdmin }[state.tab] || viewOverview;
+                   reports: viewReports, admin: viewAdmin, berthing: viewBerthingForecast }[state.tab] || viewOverview;
       await fn(v, silent);
     } catch (e) {
       if (!silent) v.innerHTML = `<div class="panel"><h3>Không tải được dữ liệu</h3><p>${esc(e.message)}</p>
         <button type="button" id="retry">Tải lại</button></div>`;
       const r = $("#retry"); if (r) r.onclick = () => route();
     }
+  }
+
+  // ============================================================ Live Berthing AI predictions
+  // Simulation-only stream: NEVER mix into operational sensor alerts.
+  let berthingTimer = null;
+  function stopBerthing() {
+    if (berthingTimer) clearInterval(berthingTimer);
+    berthingTimer = null;
+  }
+  const BERTHING_LEVELS = { Normal: "Bình thường", Caution: "Chú ý", Warning: "Cảnh báo", Critical: "Nguy hiểm" };
+  function berthingChart(entries) {
+    const items = [...entries].sort((a,b) => Number(a.elapsed_s)-Number(b.elapsed_s));
+    if (!items.length) return '<p class="muted">Chưa có dữ liệu dự báo gửi từ Berthing AI.</p>';
+    const W=950,H=310,L=62,R=24,T=25,B=42;
+    const end=Math.max(1,...items.map(e=>Number(e.elapsed_s)||0));
+    const ymax=Math.max(1,...items.flatMap(e=>[Number(e.displacement_p50_mm)||0,Number(e.displacement_p90_mm)||0,Number(e.displacement_limit_mm)||0]))*1.12;
+    const x=t=>L+(W-L-R)*t/end;
+    const y=v=>H-B-(H-T-B)*v/ymax;
+    const path=k=>items.map((e,i)=>(i?'L':'M')+x(Number(e.elapsed_s)||0).toFixed(1)+','+y(Number(e[k])||0).toFixed(1)).join(' ');
+    const ticks=[0,.25,.5,.75,1].map(t=>`<line x1="${L}" y1="${y(t*ymax)}" x2="${W-R}" y2="${y(t*ymax)}" stroke="#e2e8f0"/><text x="${L-10}" y="${y(t*ymax)+4}" text-anchor="end" font-size="12" fill="#475569">${fmtNum(t*ymax,1)}</text>`).join('');
+    const last=items[items.length-1];
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Dự báo chuyển vị P50 và P90 theo thời gian mô phỏng" style="width:100%;height:auto;max-height:360px">
+      ${ticks}<line x1="${L}" y1="${H-B}" x2="${W-R}" y2="${H-B}" stroke="#94a3b8"/>
+      <path d="${path('displacement_limit_mm')}" stroke="#dc2626" stroke-width="2" stroke-dasharray="7 5" fill="none"/>
+      <path d="${path('displacement_p90_mm')}" stroke="#d97706" stroke-width="2.5" fill="none"/>
+      <path d="${path('displacement_p50_mm')}" stroke="#2563eb" stroke-width="2.5" fill="none"/>
+      <text x="${L}" y="${H-8}" font-size="12" fill="#64748b">0 s</text><text x="${W-R}" y="${H-8}" text-anchor="end" font-size="12" fill="#64748b">${fmtNum(end,0)} s</text>
+      <text x="${L}" y="15" font-size="13" fill="#475569">Chuyển vị (mm)</text>
+      <text x="${W-R}" y="15" text-anchor="end" font-size="12" fill="#475569">Thời gian sự kiện (s)</text>
+      <title>Gần nhất: P50 ${fmtNum(last.displacement_p50_mm,2)} mm; P90 ${fmtNum(last.displacement_p90_mm,2)} mm</title></svg>`;
+  }
+  async function viewBerthingForecast(v) {
+    stopBerthing();
+    v.innerHTML=`<div class="panel"><h2>Dự báo chuyển vị từ Berthing AI</h2>
+      <p><strong style="color:#9a3412">DỮ LIỆU MÔ PHỎNG – KHÔNG PHẢI QUAN TRẮC THỰC TẾ</strong></p>
+      <p class="muted">Bản tin dự báo P50/P90 chỉ phục vụ thử nghiệm. Không kích hoạt cảnh báo vận hành hoặc thay thế số đo cảm biến thực.</p>
+      <div class="actions"><label>Event ID <input id="btEvent" placeholder="Tất cả" style="max-width:155px"></label>
+      <label>Session ID <input id="btSession" placeholder="Tất cả" style="max-width:190px"></label>
+      <button id="btRefresh" type="button">Làm mới</button><span id="btStatus" class="muted" aria-live="polite">Đang tải…</span></div>
+      <div id="btContent"></div></div>`;
+    const root=v;
+    const refresh=async()=>{
+      if(state.tab!=="berthing"||document.hidden)return;
+      const box=root.querySelector('#btContent');if(!box)return;
+      const params=new URLSearchParams({limit:'1000'});
+      const ev=root.querySelector('#btEvent').value.trim(),sess=root.querySelector('#btSession').value.trim();
+      if(ev)params.set('event_id',ev);if(sess)params.set('session_id',sess);
+      try{
+        const all=await apiCall('/api/berthing/forecasts?'+params);
+        if(state.tab!=="berthing"||!root.isConnected)return;
+        const latest=all[0];
+        const chosen=latest?all.filter(e=>e.event_id===latest.event_id&&e.session_id===latest.session_id):[];
+        const tag=latest?(BERTHING_LEVELS[latest.alert_level]||latest.alert_level):'Chưa có dữ liệu';
+        root.querySelector('#btStatus').textContent=`${all.length} bản tin · cập nhật ${new Date().toLocaleTimeString('vi-VN')}`;
+        box.innerHTML=!latest?'<p class="muted">Chưa nhận bản tin dự báo. Kiểm tra Berthing AI relay và backend ingest.</p>':
+        `<p class="muted">Đang biểu diễn session mới nhất trong kết quả; có thể lọc theo Event ID / Session ID. API trả tối đa 1.000 bản tin mỗi lần.</p>
+        <div class="actions"><strong>Sự kiện: ${esc(latest.event_id)}</strong><span>Phiên: ${esc(latest.session_id)}</span>
+          <span style="font-weight:700;color:${latest.alert_level==='Critical'?'#b91c1c':latest.alert_level==='Warning'?'#b45309':'#15803d'}">Mức: ${esc(tag)} (mô phỏng)</span></div>
+        <div class="actions"><div class="panel"><strong>P50: ${fmtNum(latest.displacement_p50_mm,2)} mm</strong></div>
+          <div class="panel"><strong>P90: ${fmtNum(latest.displacement_p90_mm,2)} mm</strong></div>
+          <div class="panel"><strong>Giới hạn: ${fmtNum(latest.displacement_limit_mm,2)} mm</strong></div>
+          <div class="panel"><strong>Xác suất vượt ngưỡng: ${fmtNum(Number(latest.probability_exceedance)*100,2)}%</strong></div></div>
+        <div class="panel"><h3>Đồ thị dự báo chuyển vị P50/P90</h3>
+          <p class="small" style="color:#2563eb">━━ P50 (mm)　<span style="color:#d97706">━━ P90 (mm)</span>　<span style="color:#dc2626">┄┄ Giới hạn</span></p>
+          ${berthingChart(chosen)}</div>
+        <div class="table-wrap"><table><thead><tr><th>Thời điểm mô phỏng</th><th>Nhận lúc</th><th>P50 (mm)</th><th>P90 (mm)</th><th>P(vượt)</th><th>Mức cảnh báo</th></tr></thead>
+        <tbody>${chosen.slice(0,40).map(e=>`<tr><td>${esc(e.elapsed_s)} s</td><td>${esc(fmtTime(e.received_at))}</td><td>${fmtNum(e.displacement_p50_mm,2)}</td><td>${fmtNum(e.displacement_p90_mm,2)}</td><td>${fmtNum(Number(e.probability_exceedance)*100,2)}%</td><td>${esc(BERTHING_LEVELS[e.alert_level]||e.alert_level)} · Mô phỏng</td></tr>`).join('')}</tbody></table></div>`;
+      }catch(e){ const status=root.querySelector('#btStatus');if(status)status.textContent='Lỗi đọc dự báo: '+e.message; }
+    };
+    root.querySelector('#btRefresh').onclick=refresh;
+    for(const id of ['#btEvent','#btSession'])root.querySelector(id).addEventListener('change',refresh);
+    await refresh();
+    berthingTimer=setInterval(refresh,5000);
   }
 
   // ============================================================ hình mặt cắt kết cấu
