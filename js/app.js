@@ -145,7 +145,7 @@
   const TABS = [
     ["dashboard", "Dashboard trực tuyến"], ["overview", "Tổng quan cảng"], ["wharf", "Công trình bến"], ["breakwater", "Đê chắn sóng"],
     ["sensors", "Cảm biến & thiết bị"], ["alerts", "Cảnh báo & khuyến cáo"],
-    ["berthing", "Dự báo cập tàu (mô phỏng)"],
+    ["berthing", "Dự báo cập tàu"],
     ["surveys", "Khảo sát định kỳ"], ["rules", "Ngưỡng & quy tắc"],
     ["reports", "Báo cáo & hồ sơ"], ["admin", "Quản trị"],
   ];
@@ -242,7 +242,7 @@
       <title>Gần nhất: P50 ${fmtNum(last.displacement_p50_mm,2)} mm; P90 ${fmtNum(last.displacement_p90_mm,2)} mm</title></svg>`;
   }
   function simAlertTable(rows, withAck) {
-    if (!rows.length) return '<p class="muted small">Không có cảnh báo mô phỏng.</p>';
+    if (!rows.length) return '<p class="muted small">Không có cảnh báo.</p>';
     return `<div class="table-wrap"><table><thead><tr><th>Cảnh báo</th><th>Mức đã phát</th><th>Mở lúc (t / khoảng cách)</th><th>Kết quả chạm bến</th><th>Trạng thái</th>${withAck ? "<th></th>" : ""}</tr></thead><tbody>${rows.map((a) =>
       `<tr><td><strong>${esc(a.title)}</strong><br><span class="small muted">${esc(a.message)}</span></td><td>${bLevel(a.level)}</td>
         <td class="num">${esc(a.first_elapsed_s ?? "—")} s · ${fmtNum(a.first_distance_m, 0)} m<br><span class="small muted">${esc(fmtTime(a.opened_at))}</span></td>
@@ -253,16 +253,27 @@
   function bindSimAck(root, after) {
     root.querySelectorAll("[data-simack]").forEach((b) => b.onclick = async () => {
       b.disabled = true;
-      try { await apiCall(`/api/berthing/alerts/${b.dataset.simack}/ack`, "POST"); toast("Đã xác nhận cảnh báo mô phỏng"); after(); }
+      try { await apiCall(`/api/berthing/alerts/${b.dataset.simack}/ack`, "POST"); toast("Đã xác nhận cảnh báo dự báo cập tàu"); after(); }
       catch (e) { toast(e.message, true); b.disabled = false; }
     });
   }
   // Theo dõi trực tuyến: chỉ tải phần bản tin mới (after_id), 1 s/lần khi phiên đang nhận dữ liệu, 10 s/lần khi rảnh.
   async function viewBerthingForecast(v) {
     stopBerthing();
-    v.innerHTML=`<div class="panel"><h2>Dự báo cập tàu từ Berthing AI</h2>
-      <p><strong style="color:#9a3412">DỮ LIỆU MÔ PHỎNG – KHÔNG PHẢI QUAN TRẮC THỰC TẾ</strong></p>
-      <p class="muted">Bản tin dự báo P10–P90 chỉ phục vụ thử nghiệm. Cảnh báo mô phỏng nằm trong bảng riêng, không kích hoạt cảnh báo vận hành, không thay thế số đo cảm biến thực.</p>
+    if (!state.sub.berthing) {   // lần đầu: mở "Dự báo thật" nếu đã có phiên thật, nếu không thì "Mô phỏng"
+      let hasLive = false; try { hasLive = (await apiCall("/api/berthing/sessions?limit=1&mode=live")).length > 0; } catch { /* bỏ qua */ }
+      state.sub.berthing = { mode: hasLive ? "live" : "simulation" };
+    }
+    const bsub = state.sub.berthing;
+    const LIVE = bsub.mode === "live";
+    v.innerHTML=`<div class="subtabs" role="group" aria-label="Nguồn dự báo">${[["live", "Dự báo thật (Berthing Pilot)"], ["simulation", "Mô phỏng"]].map(([k, n]) =>
+        `<button type="button" data-bmode="${k}" aria-pressed="${bsub.mode === k}">${n}</button>`).join("")}</div>
+      <div class="panel"><h2>${LIVE ? "Dự báo cập tàu từ số liệu BRT thật" : "Dự báo cập tàu – mô phỏng"}</h2>
+      ${LIVE ? `<p><strong style="color:#1d4ed8">DỰ BÁO TỪ SỐ LIỆU CẢM BIẾN THẬT (Berthing Pilot 4.0)</strong></p>
+      <p class="muted">Khoảng P10–P90 do mô hình tính từ khoảng cách, vận tốc đo bằng BRT và môi trường của Port-SHM. Cảnh báo dự báo nằm trong bảng riêng; kết quả mỗi lượt cập
+        (vận tốc, năng lượng, chuyển vị…) vào cảm biến ảo của bến để áp ngưỡng, quy tắc như số đo thường. Dự báo không thay thế số đo kết cấu.</p>`
+      : `<p><strong style="color:#9a3412">DỮ LIỆU MÔ PHỎNG – KHÔNG PHẢI QUAN TRẮC THỰC TẾ</strong></p>
+      <p class="muted">Từ Berthing AI hoặc bộ giả lập của Berthing Pilot. Chỉ phục vụ thử nghiệm; cảnh báo mô phỏng không kích hoạt cảnh báo vận hành, không thay thế số đo cảm biến thực.</p>`}
       <div class="actions"><label>Sự kiện <select id="btEvent" style="max-width:200px"><option value="">Tất cả</option></select></label>
       <label>Phiên <select id="btSession" style="max-width:420px"><option value="">Phiên mới nhất (tự động theo dõi)</option></select></label>
       <button id="btRefresh" type="button">Làm mới</button><span id="btStatus" class="muted" aria-live="polite">Đang tải…</span></div>
@@ -287,19 +298,20 @@
     function render(){
       const box=root.querySelector('#btContent'); if(!box) return;
       const frames=[...st.frames.values()].sort((a,b)=>b.elapsed_s-a.elapsed_s), contact=st.contact, alerts=st.alerts;
-      if(!frames.length&&!contact){box.innerHTML='<p class="muted">Chưa nhận bản tin dự báo. Kiểm tra Berthing AI relay và backend ingest.</p>';return;}
+      if(!frames.length&&!contact){box.innerHTML=LIVE?'<p class="muted">Chưa nhận bản tin dự báo thật. Kiểm tra tab Port-SHM của Berthing Pilot (địa chỉ, khoá gateway, mã công trình của bến).</p>':'<p class="muted">Chưa nhận bản tin dự báo mô phỏng. Kiểm tra Berthing AI relay hoặc bộ giả lập của Berthing Pilot.</p>';return;}
       const f=frames[0]||{}, ref=f.session_id?f:contact;
       const card=(label,value,sub='')=>`<div class="panel" style="min-width:170px"><div class="small muted">${label}</div><strong style="font-size:1.15rem">${value}</strong>${sub?`<div class="small muted">${sub}</div>`:''}</div>`;
-      const contactBox=contact?`<div class="panel" style="border-left:5px solid ${BERTHING_COLORS[contact.actual_level]||'#334155'}"><h3>Kết quả khi chạm bến (giá trị "đo" mô phỏng)</h3>
+      const contactBox=contact?`<div class="panel" style="border-left:5px solid ${BERTHING_COLORS[contact.actual_level]||'#334155'}"><h3>${contact.mode==='live'?'Kết quả khi chạm bến (đo bằng BRT; phản lực, chuyển vị đo nếu có cảm biến FND, DSP)':'Kết quả khi chạm bến (giá trị "đo" mô phỏng)'}</h3>
         <div class="actions">${card('Mức thực tế',bLevel(contact.actual_level),'mức đã cảnh báo trước: '+esc(BERTHING_LEVELS[contact.alert_level_issued]||contact.alert_level_issued||'—'))}
         ${card('Vận tốc / góc cập',`${fmtNum(contact.contact_velocity_cms,1)} cm/s · ${fmtNum(contact.contact_angle_deg,1)}°`)}
         ${card('Năng lượng va',`${fmtNum(contact.energy_kj,0)} kJ`,`${pct(contact.energy_ratio)} năng lượng định mức đệm`)}
-        ${card('Phản lực đệm',`${fmtNum(contact.measured_reaction_kn ?? contact.reaction_kn,0)} kN`,`tính toán ${fmtNum(contact.reaction_kn,0)} kN`)}
-        ${card('Chuyển vị bến (đo)',`${fmtNum(contact.measured_dx_mm ?? contact.displacement_mm,2)} mm`,`giới hạn ${fmtNum(contact.displacement_limit_mm,0)} mm`)}</div>
+        ${card(contact.measured_reaction_kn!=null||contact.mode!=='live'?'Phản lực đệm':'Phản lực đệm (tính, chưa có FND)',`${fmtNum(contact.measured_reaction_kn ?? contact.reaction_kn,0)} kN`,`tính toán ${fmtNum(contact.reaction_kn,0)} kN`)}
+        ${card(contact.measured_dx_mm!=null||contact.mode!=='live'?'Chuyển vị bến (đo)':'Chuyển vị bến (tính, chưa có DSP)',`${fmtNum(contact.measured_dx_mm ?? contact.displacement_mm,2)} mm`,`giới hạn ${fmtNum(contact.displacement_limit_mm,0)} mm${contact.measured_dx_mm!=null?' · tính '+fmtNum(contact.displacement_mm,1)+' mm':''}`)}</div>
         ${alerts[0]?.outcome?`<p><strong>Đánh giá cảnh báo:</strong> ${esc(BERTHING_OUTCOME[alerts[0].outcome]||alerts[0].outcome)}</p>`:''}
         <p class="small muted">${esc(contact.vessel||'')} ${contact.scenario?'· kịch bản '+esc(contact.scenario):''}</p></div>`:'<p class="muted small">Chưa có kết quả chạm bến cho phiên này.</p>';
       box.innerHTML=`<div class="actions"><strong>Sự kiện: ${esc(ref.event_id)}</strong><span>Phiên: ${esc(ref.session_id)}</span>
-          <span>Mức đã phát: ${bLevel(f.alert_level||contact?.alert_level_issued)} (mô phỏng)</span>${f.sensors?`<span class="muted small">${esc(f.sensors)}</span>`:''}</div>
+          <span>Mức đã phát: ${bLevel(f.alert_level||contact?.alert_level_issued)} (${(f.mode||ref.mode)==='live'?'dự báo thật':'mô phỏng'})</span>${f.sensors?`<span class="muted small">${esc(f.sensors)}</span>`:''}
+          ${(f.model_version||contact?.model_version)?`<span class="muted small">mô hình ${esc(f.model_version||contact.model_version)}</span>`:''}</div>
         <div class="actions">${card('Khoảng cách tàu – bến',`${fmtNum(f.distance_m,1)} m`,`t = ${esc(f.elapsed_s ?? '—')} s`)}
           ${card('Chuyển vị bến P50 / P90',`${fmtNum(f.displacement_p50_mm,2)} / ${fmtNum(f.displacement_p90_mm,2)} mm`,`giới hạn ${fmtNum(f.displacement_limit_mm,0)} mm`)}
           ${card('P(chuyển vị ≥ giới hạn)',pct(f.probability_exceedance))}
@@ -307,7 +319,7 @@
           ${card('Phản lực đệm P90',f.reaction_p90_kn!==undefined?`${fmtNum(f.reaction_p90_kn,0)} kN`:'—')}
           ${card('Vận tốc cập P50 / P90',f.velocity_p50_cms!==undefined?`${fmtNum(f.velocity_p50_cms,1)} / ${fmtNum(f.velocity_p90_cms,1)} cm/s`:'—')}</div>
         ${contactBox}
-        <div class="panel"><h3>Cảnh báo mô phỏng của phiên</h3>${simAlertTable(alerts,true)}</div>
+        <div class="panel"><h3>${LIVE?'Cảnh báo dự báo của phiên':'Cảnh báo mô phỏng của phiên'}</h3>${simAlertTable(alerts,true)}</div>
         <div class="panel"><h3>Đồ thị dự báo chuyển vị P50/P90</h3>
           <p class="small" style="color:#2563eb">━━ P50 (mm)　<span style="color:#d97706">━━ P90 (mm)</span>　<span style="color:#dc2626">┄┄ Giới hạn</span>　● chuyển vị đo khi chạm bến</p>
           ${berthingChart(frames,contact)}
@@ -327,12 +339,12 @@
         if(document.hidden&&!force) return;
         const now=Date.now();
         if(force||!st.sessions.length||now-st.sessionsAt>4000||(st.lastRx&&now-st.lastRx<30000&&now-st.sessionsAt>2000)){
-          st.sessions=await apiCall('/api/berthing/sessions?limit=30'); st.sessionsAt=now; fillSelects();
+          st.sessions=await apiCall('/api/berthing/sessions?limit=30&mode='+bsub.mode); st.sessionsAt=now; fillSelects();
         }
         const t=target();
         if(!t){render();root.querySelector('#btStatus').textContent=`Chưa có phiên nào · kiểm tra lúc ${fmtClock(now)}`;return;}
         if(t.session_id!==st.key){st.key=t.session_id;st.frames=new Map();st.contact=null;st.lastId=0;st.alerts=[];st.alertsSig='';st.dirty=true;}
-        const q=new URLSearchParams({session_id:st.key,limit:'1000'}); if(st.lastId) q.set('after_id',String(st.lastId));
+        const q=new URLSearchParams({session_id:st.key,limit:'1000',mode:bsub.mode}); if(st.lastId) q.set('after_id',String(st.lastId));
         const [rows,alerts]=await Promise.all([apiCall('/api/berthing/forecasts?'+q),
           apiCall('/api/berthing/alerts?status=all&session_id='+encodeURIComponent(st.key))]);
         if(state.tab!=="berthing"||!root.isConnected) return;
@@ -351,6 +363,7 @@
       finally{ running=false; if(state.tab==="berthing"&&root.isConnected) berthingTimer=setTimeout(tick,delay); }
     }
     berthingTick=tick;
+    root.querySelectorAll('[data-bmode]').forEach((b)=>b.onclick=()=>{bsub.mode=b.dataset.bmode;route();});
     root.querySelector('#btRefresh').onclick=()=>tick(true);
     evSel.addEventListener('change',()=>{fillSelects();st.key='';tick(true);});
     sesSel.addEventListener('change',()=>{st.key='';tick(true);});
@@ -938,14 +951,19 @@
     const sub = state.sub.alerts || (state.sub.alerts = { status: "active" });
     const [alerts, recs] = await Promise.all([
       apiCall(`/api/alerts?status=${sub.status}`), apiCall(`/api/recommendations?limit=100`)]);
-    let simAlerts = [];
-    if (sub.status === "active") { try { simAlerts = await apiCall("/api/berthing/alerts?status=open&limit=20"); } catch { simAlerts = []; } }
+    let simAlerts = [], liveAlerts = [];
+    if (sub.status === "active") {
+      try { [liveAlerts, simAlerts] = await Promise.all([apiCall("/api/berthing/alerts?status=open&mode=live&limit=20"),
+        apiCall("/api/berthing/alerts?status=open&mode=simulation&limit=20")]); } catch { simAlerts = []; liveAlerts = []; }
+    }
     v.innerHTML = `
       <div class="subtabs" role="group" aria-label="Lọc cảnh báo">${[["active", "Đang mở"], ["closed", "Đã đóng"]].map(([k, n]) =>
         `<button type="button" data-st="${k}" aria-pressed="${sub.status === k}">${n}</button>`).join("")}</div>
       <div class="panel"><h3>Cảnh báo</h3>${alertTable(alerts, true)}</div>
-      ${simAlerts.length ? `<div class="panel" style="border-left:5px solid #c2410c"><h3>Cảnh báo cập tàu – MÔ PHỎNG từ Berthing AI (đang mở)</h3>
-        <p class="small muted">Không phải quan trắc thực; không tham gia ngưỡng, quy tắc hay cấp hiện trạng. Xem chi tiết ở tab "Dự báo cập tàu (mô phỏng)".</p>${simAlertTable(simAlerts, true)}</div>` : ""}
+      ${liveAlerts.length ? `<div class="panel" style="border-left:5px solid #1d4ed8"><h3>Cảnh báo dự báo cập tàu – số liệu BRT thật (Berthing Pilot, đang mở)</h3>
+        <p class="small muted">Dự báo trước khi chạm, chưa phải số đo kết cấu. Kết quả lượt cập vào ngưỡng, quy tắc qua cảm biến ảo của bến. Xem chi tiết ở tab "Dự báo cập tàu".</p>${simAlertTable(liveAlerts, true)}</div>` : ""}
+      ${simAlerts.length ? `<div class="panel" style="border-left:5px solid #c2410c"><h3>Cảnh báo cập tàu – MÔ PHỎNG (đang mở)</h3>
+        <p class="small muted">Không phải quan trắc thực; không tham gia ngưỡng, quy tắc hay cấp hiện trạng. Xem chi tiết ở tab "Dự báo cập tàu", mục Mô phỏng.</p>${simAlertTable(simAlerts, true)}</div>` : ""}
       <div class="panel"><h3>Khuyến cáo khai thác</h3>${recs.length ? recTable(recs) : `<p class="muted small">Chưa có khuyến cáo.</p>`}
         <p class="disclaimer">${esc(state.catalog.disclaimer)}</p></div>`;
     v.querySelectorAll("[data-st]").forEach((b) => b.onclick = () => { sub.status = b.dataset.st; route(); });
@@ -1365,9 +1383,10 @@
           <label><input type="checkbox" name="notify_email">Nhận email cảnh báo mức Cảnh báo trở lên</label>
           <div class="actions"><button class="primary" type="submit">Thêm người dùng</button></div></form></div>
       <div class="panel"><h3>Gateway (khoá API thiết bị)</h3><div class="table-wrap"><table>
-        <thead><tr><th>Tên</th><th>Mã khoá</th><th>Lần gửi cuối</th><th>Trạng thái</th><th></th></tr></thead>
+        <thead><tr><th>Tên</th><th>Mã khoá</th><th>Lần gửi cuối</th><th>Trạng thái</th><th>Quyền đọc</th><th></th></tr></thead>
         <tbody>${gws.map((g) => `<tr><td>${esc(g.name)}</td><td class="small">${esc(g.key_prefix)}…</td><td class="small">${esc(fmtTime(g.last_seen_at))}</td>
           <td>${g.active ? "Hoạt động" : "Đã thu hồi"}</td>
+          <td><label class="small" title="Cho phép đọc môi trường và số đo kết cấu mới nhất (GET /api/environment/latest), ví dụ cho Berthing Pilot"><input type="checkbox" data-read="${g.id}" ${g.read_access ? "checked" : ""}> môi trường, kết cấu</label></td>
           <td><div class="actions"><button type="button" data-rotate="${g.id}">Cấp khoá mới</button>
             <button type="button" class="danger" data-gw="${g.id}" data-active="${g.active}">${g.active ? "Thu hồi" : "Kích hoạt"}</button></div></td></tr>`).join("")}</tbody></table></div>
         <form id="gwForm" class="actions"><input name="name" placeholder="Tên gateway" required style="max-width:280px">
@@ -1402,6 +1421,11 @@
       if (!confirm("Cấp khoá mới? Khoá cũ ngừng hoạt động ngay, gateway phải cập nhật khoá.")) return;
       try { const g = await apiCall(`/api/admin/gateways/${b.dataset.rotate}/rotate`, "POST"); await route(); showKey(g); }
       catch (e) { toast(e.message, true); }
+    });
+    v.querySelectorAll("[data-read]").forEach((b) => b.onchange = async () => {
+      if (b.checked && !confirm("Cho khoá này đọc số liệu môi trường và kết cấu mới nhất? Chỉ bật cho hệ thống tin cậy (ví dụ Berthing Pilot).")) { b.checked = false; return; }
+      try { await apiCall(`/api/admin/gateways/${b.dataset.read}/read-access?enabled=${b.checked}`, "PUT"); toast(b.checked ? "Đã cấp quyền đọc" : "Đã bỏ quyền đọc"); }
+      catch (e) { toast(e.message, true); b.checked = !b.checked; }
     });
     v.querySelectorAll("[data-gw]").forEach((b) => b.onclick = async () => {
       const on = b.dataset.active !== "true";
