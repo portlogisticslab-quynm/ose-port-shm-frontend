@@ -143,7 +143,7 @@
 
   // ============================================================ khung tab
   const TABS = [
-    ["dashboard", "Dashboard trực tuyến"], ["overview", "Tổng quan cảng"], ["wharf", "Công trình bến"], ["breakwater", "Đê chắn sóng"],
+    ["dashboard", "Dashboard trực tuyến"], ["overview", "Tổng quan cảng"], ["wharf", "Công trình bến"], ["breakwater", "Đê chắn sóng"], ["catalog", "Danh mục công trình"],
     ["sensors", "Cảm biến & thiết bị"], ["alerts", "Cảnh báo & khuyến cáo"],
     ["berthing", "Dự báo cập tàu"],
     ["surveys", "Khảo sát định kỳ"], ["rules", "Ngưỡng & quy tắc"],
@@ -152,7 +152,7 @@
 
   function renderTabs() {
     const nav = $("#tabs");
-    nav.innerHTML = TABS.filter(([k]) => (k !== "admin" || can("admin")) && (!isGuest() || GUEST_TABS.includes(k))).map(([k, name]) =>
+    nav.innerHTML = TABS.filter(([k]) => (k !== "admin" || can("admin")) && (k !== "catalog" || can("viewer")) && (!isGuest() || GUEST_TABS.includes(k))).map(([k, name]) =>
       `<button role="tab" type="button" data-tab="${k}" aria-selected="${state.tab === k}">${esc(name)}</button>`).join("");
     nav.classList.remove("hidden");
     nav.onclick = (ev) => {
@@ -191,7 +191,7 @@
       const fn = { dashboard: viewDashboard, overview: viewOverview, wharf: () => viewGroup("wharf"),
                    breakwater: () => viewGroup("breakwater"), sensors: viewSensors,
                    alerts: viewAlerts, surveys: viewSurveys, rules: viewRules,
-                   reports: viewReports, admin: viewAdmin, berthing: viewBerthingForecast }[state.tab] || viewOverview;
+                   reports: viewReports, admin: viewAdmin, berthing: viewBerthingForecast, catalog: viewCatalog }[state.tab] || viewOverview;
       await fn(v, silent);
     } catch (e) {
       if (!silent) v.innerHTML = `<div class="panel"><h3>Không tải được dữ liệu</h3><p>${esc(e.message)}</p>
@@ -371,6 +371,7 @@
   }
 
   // ============================================================ hình mặt cắt kết cấu
+  const unitLabelOf = (t) => state.catalog?.structure_types?.[t]?.unit_name || "Hạng mục";
   function sectionArt(type, level) {
     const shapes = {
       bw_caisson: `<polygon class="seabed" points="0,64 112,64 112,52 0,52"/>
@@ -388,8 +389,11 @@
         <polygon class="body" points="44,54 84,54 80,50 48,50"/>
         <rect class="body" x="50" y="14" width="28" height="36"/>`,
     };
+    // loại mới (thêm trên giao diện): vẽ hình chung theo nhóm
+    const grp = state.catalog?.structure_types?.[type]?.group;
+    const fallback = grp === "breakwater" ? shapes.bw_rubble : shapes.wharf_piled;
     return `<svg class="section-art lv-${level || 0}" viewBox="0 0 112 64" aria-hidden="true">
-      <rect class="water" x="0" y="20" width="112" height="44"/>${shapes[type] || ""}</svg>`;
+      <rect class="water" x="0" y="20" width="112" height="44"/>${shapes[type] || fallback}</svg>`;
   }
 
   const typeName = (t) => state.catalog?.structure_types?.[t]?.name || t;
@@ -635,7 +639,7 @@
       <dd class="num">${esc(fmtNum(e.value, 2))} ${esc(unitLabel(e.unit))} <span class="muted small">${esc(fmtTime(e.ts))}</span></dd>`).join("");
     const groupBlock = (g, title) => {
       const items = o.groups[g] || [];
-      if (!items.length) return `<div class="panel"><h3>${title}</h3><p class="muted">Chưa khai báo công trình. Kỹ sư thêm công trình ở tab “Cảm biến & thiết bị”.</p></div>`;
+      if (!items.length) return `<div class="panel"><h3>${title}</h3><p class="muted">Chưa khai báo công trình. Kỹ sư thêm công trình ở tab “Danh mục công trình” hoặc nút “＋ Thêm” trong tab ${title}.</p></div>`;
       return `<h3>${title}</h3><div class="grid cols">${items.map((s) => `
         <div class="panel structure-card" data-go="${esc(g)}" data-id="${s.structure_id}" tabindex="0" role="button" aria-label="Mở ${esc(s.name)}">
           ${sectionArt(s.structure_type, s.level)}
@@ -656,7 +660,7 @@
           <div class="panel"><h3>Cảnh báo đang mở</h3>${o.active_alerts.length ? `<ul class="small" style="padding-left:1rem">${o.active_alerts.map((a) =>
             `<li>${lv(a.current_level)} ${esc(a.title)}</li>`).join("")}</ul>` : `<p class="muted small">Không có cảnh báo đang mở.</p>`}</div>
         </div>
-        <div>${groupBlock("wharf", "Công trình bến")}${groupBlock("breakwater", "Đê chắn sóng")}</div>
+        <div>${groupBlock("wharf", "Công trình bến")}${groupBlock("breakwater", "Đê chắn sóng")}<div id="ovTypes"></div></div>
       </div>
       <p class="disclaimer">${esc(o.disclaimer)} Cập nhật ${esc(fmtTime(o.generated_at))}.</p>`;
     v.querySelectorAll(".structure-card").forEach((c) => {
@@ -669,6 +673,227 @@
       c.onclick = go;
       c.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
     });
+    if (!isGuest()) await typesPanel($("#ovTypes"), () => route(), "Loại công trình của cảng");
+  }
+
+  // ============================================================ DANH MỤC CÔNG TRÌNH (v0.5.0)
+  // Thêm / sửa / xoá loại công trình (loại kết cấu) và công trình, hạng mục, cấu kiện. Kỹ sư trở lên.
+  const KIND_VN = { port: "Cảng", structure: "Công trình", unit: "Hạng mục", element: "Cấu kiện" };
+  const canEdit = () => can("engineer");
+  const ico = { add: "＋", edit: "✎", del: "🗑" };
+
+  async function reloadCatalog() {
+    const [cat, st] = await Promise.all([apiCall("/api/catalog"), apiCall("/api/structures")]);
+    state.catalog = cat; state.structures = st;
+  }
+
+  /** Hộp thoại biểu mẫu chung. fields: [{name,label,type,value,options,required,pattern,hint,readonly,rows,full}] */
+  function openForm({ title, intro = "", fields, submitText = "Lưu", onSubmit }) {
+    const d = document.createElement("dialog");
+    d.className = "edit-dlg";
+    const field = (f) => {
+      const v = f.value ?? "";
+      const attrs = `name="${f.name}" ${f.required ? "required" : ""} ${f.readonly ? "readonly" : ""}
+        ${f.pattern ? `pattern="${esc(f.pattern)}"` : ""} ${f.max ? `maxlength="${f.max}"` : ""}`;
+      let input;
+      if (f.type === "select") {
+        input = `<select ${attrs}>${f.options.map((o) => o.group
+          ? `<optgroup label="${esc(o.group)}">${o.items.map(([k, l]) => `<option value="${esc(k)}" ${String(k) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</optgroup>`
+          : `<option value="${esc(o[0])}" ${String(o[0]) === String(v) ? "selected" : ""}>${esc(o[1])}</option>`).join("")}</select>`;
+      } else if (f.type === "textarea") {
+        input = `<textarea ${attrs} rows="${f.rows || 4}">${esc(Array.isArray(v) ? v.join("\n") : v)}</textarea>`;
+      } else {
+        input = `<input type="${f.type || "text"}" ${attrs} value="${esc(v)}" autocomplete="off">`;
+      }
+      return `<label class="${f.full ? "full" : ""}">${esc(f.label)}${f.required ? " *" : ""}${input}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ""}</label>`;
+    };
+    d.innerHTML = `<form method="dialog" novalidate>
+      <h3>${esc(title)}</h3>${intro ? `<p class="small muted">${intro}</p>` : ""}
+      <div class="form-row dlg-grid">${fields.map(field).join("")}</div>
+      <p class="dlg-err" role="alert" hidden></p>
+      <div class="actions"><button type="submit" class="primary">${esc(submitText)}</button><button type="button" data-cancel>Huỷ</button></div></form>`;
+    document.body.append(d);
+    const form = d.querySelector("form"), err = d.querySelector(".dlg-err"), btn = form.querySelector("[type=submit]");
+    const close = () => { d.close(); d.remove(); };
+    d.querySelector("[data-cancel]").onclick = close;
+    d.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      if (!form.reportValidity()) return;
+      const data = Object.fromEntries(new FormData(form));
+      err.hidden = true; btn.disabled = true;
+      try { await onSubmit(data, form); close(); }
+      catch (ex) { err.textContent = ex.message; err.hidden = false; }
+      finally { btn.disabled = false; }
+    };
+    d.showModal();
+    (form.querySelector("input:not([readonly]),select,textarea"))?.focus();
+    return { dialog: d, form };
+  }
+  const lines = (s) => String(s || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+
+  // ---------------------------------------------------------------- loại công trình
+  function editType(t, after, presetGroup) {
+    const groups = Object.entries(state.catalog.groups);
+    openForm({
+      title: t ? `Sửa loại công trình: ${t.name}` : "Thêm loại công trình",
+      intro: t ? (t.structures ? `Đang có ${t.structures} công trình thuộc loại này – không đổi được nhóm.` : "")
+        : "Loại công trình hiện thành một nút chọn trong tab của nhóm (Công trình bến / Đê chắn sóng).",
+      fields: [
+        { name: "code", label: "Mã loại", value: t?.code ?? "", required: true, readonly: !!t, pattern: "^[a-z][a-z0-9_]+$", max: 40,
+          hint: t ? "Mã không đổi được" : "chữ thường, số, gạch dưới; ví dụ wharf_jetty" },
+        { name: "group", label: "Nhóm", type: "select", value: t?.group ?? presetGroup ?? groups[0][0], options: groups },
+        { name: "name", label: "Tên loại", value: t?.name ?? "", required: true, max: 120, hint: "ví dụ Bến nhô (jetty)" },
+        { name: "en", label: "Tên tiếng Anh", value: t?.en ?? "", max: 120 },
+        { name: "unit_name", label: "Tên hạng mục (đơn vị kết cấu)", value: t?.unit_name ?? "Hạng mục", required: true, max: 80, hint: "ví dụ Nhịp / phân đoạn, Thùng chìm" },
+        { name: "sort_order", label: "Thứ tự hiển thị", type: "number", value: t?.sort_order ?? 100 },
+        { name: "components", label: "Cấu kiện điển hình (mỗi dòng một cấu kiện)", type: "textarea", value: t?.components ?? [], full: true, rows: 4 },
+        { name: "chains", label: "Chuỗi cảnh báo / cơ chế hư hỏng (mỗi dòng một chuỗi)", type: "textarea", value: t?.chains ?? [], full: true, rows: 3 },
+      ],
+      submitText: t ? "Lưu thay đổi" : "Thêm loại",
+      onSubmit: async (d) => {
+        const body = { group: d.group, name: d.name.trim(), en: d.en.trim(), unit_name: d.unit_name.trim(),
+          sort_order: Number(d.sort_order) || 0, components: lines(d.components), chains: lines(d.chains) };
+        if (t) { if (t.structures && d.group === t.group) delete body.group; await apiCall(`/api/structure-types/${encodeURIComponent(t.code)}`, "PUT", body); }
+        else await apiCall("/api/structure-types", "POST", { code: d.code.trim(), ...body });
+        toast(t ? "Đã lưu loại công trình" : "Đã thêm loại công trình");
+        await reloadCatalog(); await after();
+      },
+    });
+  }
+  async function deleteType(t, after) {
+    if (t.structures) { toast(`Loại “${t.name}” đang có ${t.structures} công trình; xoá hoặc chuyển các công trình đó sang loại khác trước.`, true); return; }
+    if (!confirm(`Xoá loại công trình “${t.name}” (${t.code})?${t.builtin ? "\nĐây là loại có sẵn theo đề cương; có thể thêm lại sau." : ""}`)) return;
+    try { await apiCall(`/api/structure-types/${encodeURIComponent(t.code)}`, "DELETE"); toast("Đã xoá loại công trình"); await reloadCatalog(); await after(); }
+    catch (e) { toast(e.message, true); }
+  }
+  /** Bảng loại công trình theo nhóm, có nút Thêm / Sửa / Xoá (kỹ sư). */
+  async function typesPanel(el, after, title = "Loại công trình") {
+    const types = await apiCall("/api/structure-types");
+    const ed = canEdit();
+    el.innerHTML = `<div class="panel"><div class="panel-head"><h3>${esc(title)}</h3>
+      ${ed ? `<button type="button" class="primary small" data-type-add>${ico.add} Thêm loại</button>` : ""}</div>
+      ${Object.entries(state.catalog.groups).map(([g, gname]) => {
+        const rows = types.filter((t) => t.group === g);
+        return `<h4 class="grp">${esc(gname)} <span class="muted small">${rows.length} loại</span>
+          ${ed ? `<button type="button" class="link small" data-type-add="${g}">${ico.add} thêm vào nhóm này</button>` : ""}</h4>
+          <div class="table-wrap"><table class="compact"><thead><tr><th>Loại</th><th>Hạng mục</th><th class="num">Công trình</th>${ed ? "<th></th>" : ""}</tr></thead><tbody>
+          ${rows.map((t) => `<tr><td><b>${esc(t.name)}</b><br><span class="muted small">${esc(t.code)}${t.en ? " · " + esc(t.en) : ""}</span></td>
+            <td class="small">${esc(t.unit_name)}</td><td class="num">${t.structures}</td>
+            ${ed ? `<td class="row-acts"><button type="button" class="small" data-type-edit="${esc(t.code)}" aria-label="Sửa ${esc(t.name)}">${ico.edit} Sửa</button>
+              <button type="button" class="small danger" data-type-del="${esc(t.code)}" aria-label="Xoá ${esc(t.name)}" ${t.structures ? `title="Đang có ${t.structures} công trình"` : ""}>${ico.del} Xoá</button></td>` : ""}</tr>`).join("")
+            || `<tr><td colspan="4" class="muted">Chưa có loại nào.</td></tr>`}
+          </tbody></table></div>`;
+      }).join("")}</div>`;
+    const find = (c) => types.find((t) => t.code === c);
+    el.querySelectorAll("[data-type-add]").forEach((b) => b.onclick = () => editType(null, after, b.dataset.typeAdd || undefined));
+    el.querySelectorAll("[data-type-edit]").forEach((b) => b.onclick = () => editType(find(b.dataset.typeEdit), after));
+    el.querySelectorAll("[data-type-del]").forEach((b) => b.onclick = () => deleteType(find(b.dataset.typeDel), after));
+  }
+
+  // ---------------------------------------------------------------- công trình / hạng mục / cấu kiện
+  /** kind: structure | unit | element | port. parent: nút cha (unit/element), node: nút đang sửa. */
+  async function editNode({ kind, parent = null, node = null, group = null, stype = null }, after) {
+    const types = Object.entries(state.catalog.structure_types);
+    const typeOpts = Object.entries(state.catalog.groups).map(([g, gname]) => ({ group: gname,
+      items: types.filter(([, t]) => t.group === g && (!group || node || t.group === group)).map(([k, t]) => [k, t.name]) }))
+      .filter((o) => o.items.length);
+    const fields = [];
+    let ports = [];
+    if (kind === "structure" && !node) {
+      ports = await apiCall("/api/nodes?kind=port");
+      if (!ports.length) { toast("Chưa có nút cảng. Thêm cảng trước ở tab “Danh mục công trình”.", true); return; }
+      fields.push({ name: "parent_id", label: "Thuộc cảng", type: "select", value: parent?.id ?? ports[0].id, options: ports.map((p) => [p.id, `${p.name} (${p.code})`]) });
+    }
+    if (kind === "structure") fields.push({ name: "structure_type", label: "Loại công trình", type: "select", value: node?.structure_type ?? stype ?? typeOpts[0]?.items[0]?.[0], options: typeOpts,
+      hint: node ? "Đổi loại: các hạng mục, cấu kiện con chuyển theo" : "" });
+    let suggest = "";
+    if (!node && parent && kind !== "structure") {
+      const kids = await apiCall(`/api/nodes?parent_id=${parent.id}`);
+      const prefix = kind === "unit" ? "-N" : "-C";
+      for (let i = kids.length + 1; i < kids.length + 50; i++) { const c = `${parent.code}${prefix}${i}`; if (!kids.some((k) => k.code === c)) { suggest = c; break; } }
+    }
+    const unitName = parent ? (state.catalog.structure_types[parent.structure_type]?.unit_name || "Hạng mục") : "Hạng mục";
+    fields.push(
+      { name: "code", label: "Mã", value: node?.code ?? suggest, required: true, pattern: "^[A-Za-z0-9._-]+$", max: 60,
+        hint: node && kind === "structure" ? "Đổi mã công trình bến thì phải sửa mã tương ứng trong Berthing Pilot (tab Port-SHM)" : "chữ, số, . _ - ; ví dụ WH-B03" },
+      { name: "name", label: "Tên", value: node?.name ?? "", required: true, max: 200,
+        hint: kind === "unit" ? `ví dụ ${unitName} 4` : kind === "structure" ? "ví dụ Bến cầu tàu số 3" : "" },
+      { name: "sort_order", label: "Thứ tự", type: "number", value: node?.sort_order ?? 0 },
+      { name: "description", label: "Mô tả", type: "textarea", value: node?.description ?? "", full: true, rows: 2 });
+    const what = kind === "unit" ? unitName.toLowerCase() : KIND_VN[kind].toLowerCase();
+    openForm({
+      title: node ? `Sửa ${KIND_VN[kind].toLowerCase()}: ${node.name}` : `Thêm ${what}${parent ? ` vào ${parent.name}` : ""}`,
+      fields, submitText: node ? "Lưu thay đổi" : "Thêm",
+      onSubmit: async (d) => {
+        const body = { code: d.code.trim(), name: d.name.trim(), sort_order: Number(d.sort_order) || 0, description: d.description || "" };
+        if (kind === "structure") body.structure_type = d.structure_type;
+        if (node) await apiCall(`/api/nodes/${node.id}`, "PUT", body);
+        else await apiCall("/api/nodes", "POST", { ...body, kind, parent_id: kind === "structure" ? Number(d.parent_id) : parent?.id ?? null });
+        toast(node ? "Đã lưu" : `Đã thêm ${what}`);
+        await reloadCatalog(); await after(node ? null : body.code);
+      },
+    });
+  }
+  async function deleteNode(node, after) {
+    if (!confirm(`Xoá ${KIND_VN[node.kind].toLowerCase()} “${node.name}” (${node.code})?\nChỉ xoá được nút chưa có nút con, cảm biến hay số liệu lịch sử.`)) return;
+    try { await apiCall(`/api/nodes/${node.id}`, "DELETE"); toast("Đã xoá"); await reloadCatalog(); await after(); }
+    catch (e) { toast(e.message, true); }
+  }
+
+  /** Tab riêng: loại công trình + cây cảng → công trình → hạng mục → cấu kiện. */
+  async function viewCatalog(v) {
+    const sub = state.sub.catalog || (state.sub.catalog = { group: "all", open: {} });
+    const nodes = await apiCall("/api/nodes");
+    const byParent = new Map();
+    for (const n of nodes) { const k = n.parent_id ?? 0; if (!byParent.has(k)) byParent.set(k, []); byParent.get(k).push(n); }
+    const ed = canEdit();
+    const tn = (t) => state.catalog.structure_types[t]?.name || t || "";
+    const btns = (n) => {
+      if (!ed) return "";
+      const addKid = n.kind === "port" ? ["structure", "công trình"] : n.kind === "structure" ? ["unit", (state.catalog.structure_types[n.structure_type]?.unit_name || "hạng mục").toLowerCase()]
+        : n.kind === "unit" ? ["element", "cấu kiện"] : null;
+      return `<span class="row-acts">${addKid ? `<button type="button" class="small" data-add="${addKid[0]}" data-id="${n.id}">${ico.add} ${esc(addKid[1])}</button>` : ""}
+        <button type="button" class="small" data-edit="${n.id}" aria-label="Sửa ${esc(n.name)}">${ico.edit} Sửa</button>
+        <button type="button" class="small danger" data-del="${n.id}" aria-label="Xoá ${esc(n.name)}">${ico.del} Xoá</button></span>`;
+    };
+    const row = (n, depth) => {
+      const kids = (byParent.get(n.id) || []).filter((k) => k.kind !== "structure" || sub.group === "all" || k.group === sub.group);
+      const open = n.kind === "port" || sub.open[n.id];
+      const toggle = kids.length && n.kind !== "port" ? `<button type="button" class="tw" data-tog="${n.id}" aria-expanded="${!!open}" aria-label="${open ? "Thu gọn" : "Mở"} ${esc(n.name)}">${open ? "▾" : "▸"}</button>` : `<span class="tw"></span>`;
+      return `<li class="tree-${n.kind}" style="--d:${depth}"><div class="tree-row">${toggle}
+          <span class="tree-name"><span class="kind">${esc(n.kind === "unit" ? (state.catalog.structure_types[n.structure_type]?.unit_name || "Hạng mục") : KIND_VN[n.kind])}</span>
+          <b>${esc(n.name)}</b> <span class="muted small">${esc(n.code)}${n.kind === "structure" ? " · " + esc(tn(n.structure_type)) : ""}</span></span>${btns(n)}</div>
+        ${open && kids.length ? `<ul>${kids.map((k) => row(k, depth + 1)).join("")}</ul>` : ""}</li>`;
+    };
+    const ports = byParent.get(0) || [];
+    v.innerHTML = `
+      <div class="panel intro"><h2>Danh mục công trình</h2>
+        <p class="small muted">Thêm, sửa, xoá <b>loại công trình</b> (ví dụ Bến cầu tàu, Đê mái nghiêng) và <b>công trình, hạng mục, cấu kiện</b> của cảng.
+        ${ed ? "Chỉ xoá được nút chưa có nút con, cảm biến hay số liệu lịch sử; mọi thay đổi được ghi nhật ký kiểm toán." : "Tài khoản của bạn chỉ xem được; kỹ sư mới sửa được danh mục."}</p></div>
+      <div class="grid catalog">
+        <div id="catTypes"></div>
+        <div class="panel"><div class="panel-head"><h3>Công trình & hạng mục</h3>
+          ${ed ? `<button type="button" class="small" data-add="port">${ico.add} Cảng</button>` : ""}</div>
+          <div class="subtabs" role="group" aria-label="Lọc theo nhóm">${[["all", "Tất cả"], ...Object.entries(state.catalog.groups)].map(([k, l]) =>
+            `<button type="button" data-grp="${k}" aria-pressed="${sub.group === k}">${esc(l)}</button>`).join("")}
+            <button type="button" class="link small" data-expand>Mở tất cả</button></div>
+          ${ports.length ? `<ul class="tree">${ports.map((p) => row(p, 0)).join("")}</ul>` : `<p class="muted">Chưa có nút cảng.${ed ? " Bấm “＋ Cảng” để bắt đầu." : ""}</p>`}
+        </div>
+      </div>`;
+    const again = () => viewCatalog(v);
+    await typesPanel($("#catTypes"), again);
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    v.querySelectorAll("[data-grp]").forEach((b) => b.onclick = () => { sub.group = b.dataset.grp; again(); });
+    v.querySelector("[data-expand]").onclick = () => { nodes.forEach((n) => { sub.open[n.id] = true; }); again(); };
+    v.querySelectorAll("[data-tog]").forEach((b) => b.onclick = () => { const id = Number(b.dataset.tog); sub.open[id] = !sub.open[id]; again(); });
+    v.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => {
+      const kind = b.dataset.add, parent = b.dataset.id ? byId.get(Number(b.dataset.id)) : null;
+      if (parent) sub.open[parent.id] = true;
+      editNode({ kind, parent, group: sub.group === "all" ? null : sub.group }, again);
+    });
+    v.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => { const n = byId.get(Number(b.dataset.edit)); editNode({ kind: n.kind, node: n, parent: byId.get(n.parent_id) }, again); });
+    v.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => deleteNode(byId.get(Number(b.dataset.del)), again));
   }
 
   // ============================================================ BẾN / ĐÊ
@@ -676,19 +901,35 @@
     const v = el || $("#view");
     state.structures = await apiCall("/api/structures");
     const types = Object.entries(state.catalog.structure_types).filter(([, t]) => t.group === group);
-    const sub = state.sub[group] || (state.sub[group] = { type: types[0][0] });
+    const sub = state.sub[group] || (state.sub[group] = { type: types[0]?.[0] });
+    if (!types.some(([k]) => k === sub.type)) sub.type = types[0]?.[0];
     const list = state.structures.filter((s) => s.structure_type === sub.type);
     if (!list.find((s) => s.id === sub.id)) sub.id = list[0]?.id;
     if (silent && sub.channel) return;   // không vẽ lại khi đang xem biểu đồ
+    const ed = canEdit(), gname = state.catalog.groups[group];
+    const cur = list.find((s) => s.id === sub.id);
+    const again = (code) => { if (code) { const s = state.structures.find((x) => x.code === code); if (s) { sub.type = s.structure_type; sub.id = s.id; } } return viewGroup(group); };
     v.innerHTML = `
       <div class="subtabs" role="group" aria-label="Loại kết cấu">${types.map(([k, t]) =>
-        `<button type="button" data-type="${k}" aria-pressed="${k === sub.type}">${esc(t.name)}</button>`).join("")}</div>
+        `<button type="button" data-type="${k}" aria-pressed="${k === sub.type}">${esc(t.name)}</button>`).join("")}
+        ${ed ? `<button type="button" class="link small" data-type-add>${ico.add} Loại ${esc(gname.toLowerCase())}</button>` : ""}</div>
       <div class="grid two">
-        <div class="panel"><h3>Công trình</h3>${list.length ? `<table><tbody>${list.map((s) =>
+        <div class="panel"><div class="panel-head"><h3>Công trình</h3>
+          ${ed && sub.type ? `<button type="button" class="primary small" data-st-add>${ico.add} Thêm</button>` : ""}</div>
+          ${list.length ? `<table><tbody>${list.map((s) =>
           `<tr class="clickable ${s.id === sub.id ? "selected" : ""}" data-id="${s.id}"><td>${esc(s.name)}<br><span class="muted small">${esc(s.code)}</span></td></tr>`).join("")}</tbody></table>`
-          : `<p class="muted small">Chưa có công trình loại này.</p>`}</div>
+          : `<p class="muted small">Chưa có công trình loại này.${ed ? " Bấm “＋ Thêm” để khai báo." : ""}</p>`}
+          ${ed && cur ? `<div class="actions"><button type="button" class="small" data-st-edit>${ico.edit} Sửa</button>
+            <button type="button" class="small danger" data-st-del>${ico.del} Xoá</button>
+            <span class="muted small">${esc(cur.name)}</span></div>` : ""}</div>
         <div id="structureDetail"></div>
       </div>`;
+    if (ed) {
+      const ta = v.querySelector("[data-type-add]"); if (ta) ta.onclick = () => editType(null, () => viewGroup(group), group);
+      const add = v.querySelector("[data-st-add]"); if (add) add.onclick = () => editNode({ kind: "structure", group, stype: sub.type }, again);
+      const e1 = v.querySelector("[data-st-edit]"); if (e1) e1.onclick = () => editNode({ kind: "structure", node: cur, group }, again);
+      const d1 = v.querySelector("[data-st-del]"); if (d1) d1.onclick = () => deleteNode(cur, () => { sub.id = null; return viewGroup(group); });
+    }
     v.querySelectorAll("[data-type]").forEach((b) => b.onclick = () => {
       sub.type = b.dataset.type; sub.id = null; sub.channel = null; viewGroup(group);
     });
@@ -716,12 +957,16 @@
         ${st.chains.map((c) => `<p class="chain">${esc(c)}</p>`).join("")}
         <p class="muted small">${esc(st.grade_note)}</p>
       </div>
-      <div class="panel"><h3>Đơn vị kết cấu</h3><div class="table-wrap"><table>
-        <thead><tr><th>Đơn vị</th><th>Mức</th><th>Cấp gợi ý</th><th>Cấp xác nhận</th>${canApprove() ? "<th></th>" : ""}</tr></thead>
+      <div class="panel"><div class="panel-head"><h3>Đơn vị kết cấu (${esc(unitLabelOf(st.structure_type))})</h3>
+        ${canEdit() ? `<button type="button" class="small" data-unit-add>${ico.add} Thêm ${esc(unitLabelOf(st.structure_type).toLowerCase())}</button>` : ""}</div>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Đơn vị</th><th>Mức</th><th>Cấp gợi ý</th><th>Cấp xác nhận</th>${canApprove() || canEdit() ? "<th></th>" : ""}</tr></thead>
         <tbody>${st.nodes.map((n) => `<tr><td>${esc(n.name)} <span class="muted small">${esc(n.code)}</span></td>
           <td>${lv(n.level)}</td><td><span class="grade suggested">${esc(n.suggested_grade)}</span></td>
           <td>${n.confirmed_grade ? `<span class="grade">${esc(n.confirmed_grade)}</span> <span class="muted small">${esc(fmtDate(n.confirmed_at))}</span>` : "–"}</td>
-          ${canApprove() ? `<td><button type="button" data-grade="${n.id}" data-sug="${esc(n.suggested_grade)}">Xác nhận cấp</button></td>` : ""}</tr>`).join("")}
+          ${canApprove() || canEdit() ? `<td class="row-acts">${canApprove() ? `<button type="button" data-grade="${n.id}" data-sug="${esc(n.suggested_grade)}">Xác nhận cấp</button>` : ""}
+            ${canEdit() ? `<button type="button" class="small" data-unit-edit="${n.id}" aria-label="Sửa ${esc(n.name)}">${ico.edit}</button><button type="button" class="small danger" data-unit-del="${n.id}" aria-label="Xoá ${esc(n.name)}">${ico.del}</button>` : ""}</td>` : ""}</tr>`).join("")
+          || `<tr><td colspan="5" class="muted">Chưa có đơn vị kết cấu.</td></tr>`}
         </tbody></table></div>
         ${canApprove() ? `<div class="actions"><button type="button" data-grade="${st.structure_id}" data-sug="${esc(st.suggested_grade)}" data-structure="1">Xác nhận cấp công trình</button></div>` : ""}
       </div>
@@ -736,6 +981,14 @@
       <div class="panel ${sub.channel ? "" : "hidden"}" id="chartPanel"></div>
       <div class="panel hidden" id="specPanel"></div>`;
     bindAlertActions(el, () => viewGroup(group));
+    if (canEdit()) {
+      const me = state.structures.find((x) => x.id === id) || { id, code: st.code, name: st.name, structure_type: st.structure_type, kind: "structure" };
+      const back = () => viewGroup(group);
+      const ua = el.querySelector("[data-unit-add]"); if (ua) ua.onclick = () => editNode({ kind: "unit", parent: me }, back);
+      const full = async (nid) => (await apiCall(`/api/nodes?parent_id=${(st.nodes.find((n) => n.id === nid) || {}).parent_id ?? id}`)).find((n) => n.id === nid);
+      el.querySelectorAll("[data-unit-edit]").forEach((b) => b.onclick = async () => { const n = await full(Number(b.dataset.unitEdit)); if (n) editNode({ kind: n.kind, node: n, parent: me }, back); });
+      el.querySelectorAll("[data-unit-del]").forEach((b) => b.onclick = async () => { const n = await full(Number(b.dataset.unitDel)); if (n) deleteNode(n, back); });
+    }
     el.querySelectorAll("[data-ch]").forEach((b) => b.onclick = () => {
       sub.channel = Number(b.dataset.ch); showChannel($("#chartPanel"), sub.channel, sub);
     });
@@ -1054,14 +1307,16 @@
         <div id="xlReport"></div>
       </div>
       <div class="panel"><h3>Danh mục cảm biến</h3><div class="table-wrap"><table>
-        <thead><tr><th>Mã</th><th>Loại</th><th>Vị trí trên công trình</th><th>Chu kỳ gửi</th><th>Lần nhận cuối</th><th>Kênh (hiệu chỉnh)</th></tr></thead>
+        <thead><tr><th>Mã</th><th>Loại</th><th>Vị trí trên công trình</th><th>Chu kỳ gửi</th><th>Lần nhận cuối</th><th>Kênh (hiệu chỉnh)</th><th>Trạng thái</th></tr></thead>
         <tbody>${sensors.map((s) => `<tr><td>${esc(s.code)}${s.active ? "" : ` <span class="tag">tắt</span>`}</td>
           <td class="small">${esc(st[s.sensor_type]?.name || s.sensor_type)}</td><td class="small">${esc(pathOf(s.node_id))}</td>
           <td class="num small">${s.expected_interval_s ? s.expected_interval_s / 60 + " phút" : "theo sự kiện"}</td>
           <td class="small">${esc(fmtTime(s.last_seen_at))}</td>
           <td class="small">${s.channels.map((c) => `${can("engineer") ? `<button type="button" class="small" data-edit-ch="${c.id}">${esc(c.name)}</button>` : esc(c.name)}
-            <span class="muted">${esc(unitLabel(c.unit))} ×${esc(fmtNum(c.factor))} ${c.offset ? "+" + esc(fmtNum(c.offset)) : ""}${c.temp_coeff ? " bù nhiệt" : ""}</span>`).join("<br>")}</td></tr>`).join("")
-          || `<tr><td colspan="6" class="muted">Chưa có cảm biến.</td></tr>`}</tbody></table></div></div>
+            <span class="muted">${esc(unitLabel(c.unit))} ×${esc(fmtNum(c.factor))} ${c.offset ? "+" + esc(fmtNum(c.offset)) : ""}${c.temp_coeff ? " bù nhiệt" : ""}</span>`).join("<br>")}</td>
+          <td class="small">${s.active ? "Đang hoạt động" : '<span class="tag">Đã tắt</span>'}${can("engineer") ? `<br><button type="button" class="small${s.active ? " danger" : ""}" data-toggle-sensor="${s.id}" data-code="${esc(s.code)}" data-active="${s.active}">${s.active ? "Tắt" : "Bật"}</button>` : ""}</td></tr>`).join("")
+          || `<tr><td colspan="7" class="muted">Chưa có cảm biến.</td></tr>`}</tbody></table></div>
+        ${can("engineer") ? `<p class="small muted">Tắt: cảm biến ngừng nhận số liệu, không còn trong dashboard, trạng thái công trình, kiểm tra mất tín hiệu và số liệu gửi cho Berthing Pilot; cảnh báo mất tín hiệu đang mở được hạ mức. Số liệu cũ, ngưỡng, kênh giữ nguyên; bật lại để dùng tiếp. Mọi lần tắt/bật được ghi nhật ký kiểm toán.</p>` : ""}</div>
       ${can("engineer") ? `
       <div class="grid cols">
         <form class="panel" id="nodeForm"><h3>Thêm công trình / đơn vị</h3>
@@ -1090,6 +1345,13 @@
         <div class="actions"><button class="primary" type="submit">Lưu hiệu chỉnh</button><button type="button" id="chCancel">Huỷ</button></div></form>` : ""}`;
     bindExcel(v);
     if (!can("engineer")) return;
+    v.querySelectorAll("[data-toggle-sensor]").forEach((b) => b.onclick = async () => {
+      const on = b.dataset.active !== "true", code = b.dataset.code;
+      if (!on && !confirm(`Tắt cảm biến ${code}? Cảm biến sẽ ngừng nhận số liệu cho đến khi bật lại.`)) return;
+      b.disabled = true;
+      try { await apiCall(`/api/sensors/${b.dataset.toggleSensor}`, "PUT", { active: on }); toast(on ? `Đã bật ${code}` : `Đã tắt ${code}`); route(); }
+      catch (e) { toast(e.message, true); b.disabled = false; }
+    });
     const numOrNull = (x) => x === "" || x === null ? null : Number(x);
     $("#nodeForm").onsubmit = async (ev) => {
       ev.preventDefault();

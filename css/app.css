@@ -186,3 +186,37 @@ label.btn:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
   background: repeating-linear-gradient(135deg, var(--sheet) 0 8px, var(--shoal) 8px 9px); }
 .tile.evt .tile-val { color: var(--ink-2); }
 .tile.evt .tile-foot { font-style: italic; }
+
+/* ---------------------------------------------------------------- danh mục công trình (v0.5.0) */
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin-bottom: .6rem; }
+.panel-head h3 { margin: 0; }
+button.small { font-size: .8rem; padding: .25rem .55rem; }
+button.link { border: 0; background: none; color: var(--channel); padding: .25rem .35rem; text-decoration: underline; text-underline-offset: 2px; }
+.row-acts { display: inline-flex; gap: .35rem; flex-wrap: wrap; justify-content: flex-end; white-space: nowrap; }
+td.row-acts { display: table-cell; text-align: right; }
+td.row-acts > * + * { margin-left: .3rem; }
+h4.grp { font-size: .92rem; margin: .9rem 0 .3rem; display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+table.compact td, table.compact th { padding: .35rem .4rem; }
+.grid.catalog { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-items: start; }
+@media (max-width: 960px) { .grid.catalog { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 560px) { .row-acts button[data-type-edit], .row-acts button[data-type-del], .row-acts button[data-edit], .row-acts button[data-del], .row-acts button[data-add] { font-size: 0; padding: .3rem .45rem; } .row-acts button[data-type-edit]::first-letter, .row-acts button[data-type-del]::first-letter, .row-acts button[data-edit]::first-letter, .row-acts button[data-del]::first-letter, .row-acts button[data-add]::first-letter { font-size: .85rem; } .tree-row .row-acts { width: 100%; justify-content: flex-start; padding-left: 2rem; } }
+.tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+.tree li { padding-left: calc(var(--d) * 1.15rem); }
+.tree ul li { padding-left: 1.15rem; }
+.tree-row { display: flex; align-items: center; gap: .45rem; padding: .4rem .25rem; border-bottom: 1px solid var(--shoal); flex-wrap: wrap; }
+.tree-row:hover { background: #f6f9fa; }
+.tree-name { flex: 1 1 14rem; min-width: 0; }
+.tree-name .kind { display: inline-block; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2);
+  background: var(--shoal); border-radius: 999px; padding: .05rem .5rem; margin-right: .35rem; }
+.tree-port > .tree-row .kind { background: var(--ink); color: #fff; }
+.tree-structure > .tree-row .kind { background: #d8ecf3; color: var(--channel); }
+.tw { width: 1.6rem; height: 1.6rem; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: .9rem; flex: none; }
+dialog.edit-dlg { width: min(640px, calc(100vw - 32px)); border: 1px solid var(--contour); border-radius: var(--radius-m);
+  padding: 1.1rem 1.2rem; color: var(--ink); background: var(--sheet); box-shadow: 0 18px 48px rgba(20, 50, 74, .25); }
+dialog.edit-dlg::backdrop { background: rgba(20, 50, 74, .35); }
+.dlg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dlg-grid label.full { grid-column: 1 / -1; }
+@media (max-width: 560px) { .dlg-grid { grid-template-columns: 1fr; } }
+.hint { display: block; font-size: .76rem; color: var(--ink-2); margin-top: .2rem; }
+input[readonly] { background: var(--shoal); }
+.dlg-err { color: var(--lv3); font-weight: 500; margin: .2rem 0 .4rem; }
