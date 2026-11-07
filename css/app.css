@@ -220,3 +220,10 @@ dialog.edit-dlg::backdrop { background: rgba(20, 50, 74, .35); }
 .hint { display: block; font-size: .76rem; color: var(--ink-2); margin-top: .2rem; }
 input[readonly] { background: var(--shoal); }
 .dlg-err { color: var(--lv3); font-weight: 500; margin: .2rem 0 .4rem; }
+/* thêm cảm biến: vị trí lắp + thiết bị (v0.5.0) */
+.sensor-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+@media (max-width: 860px) { .sensor-grid { grid-template-columns: minmax(0, 1fr); } }
+.sensor-grid fieldset { border: 1px solid var(--contour); border-radius: var(--radius-m); padding: .6rem .9rem .2rem; margin: 0; min-width: 0; }
+.sensor-grid legend { font-weight: 600; font-size: .9rem; padding: 0 .35rem; color: var(--ink); }
+.sensor-grid fieldset.place { background: #f6f9fa; }
+select:disabled { background: var(--shoal); color: var(--ink-2); }

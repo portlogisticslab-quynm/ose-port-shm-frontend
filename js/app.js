@@ -1318,24 +1318,26 @@
           || `<tr><td colspan="7" class="muted">Chưa có cảm biến.</td></tr>`}</tbody></table></div>
         ${can("engineer") ? `<p class="small muted">Tắt: cảm biến ngừng nhận số liệu, không còn trong dashboard, trạng thái công trình, kiểm tra mất tín hiệu và số liệu gửi cho Berthing Pilot; cảnh báo mất tín hiệu đang mở được hạ mức. Số liệu cũ, ngưỡng, kênh giữ nguyên; bật lại để dùng tiếp. Mọi lần tắt/bật được ghi nhật ký kiểm toán.</p>` : ""}</div>
       ${can("engineer") ? `
-      <div class="grid cols">
-        <form class="panel" id="nodeForm"><h3>Thêm công trình / đơn vị</h3>
-          <label>Loại nút<select name="kind"><option value="port">Cảng</option><option value="structure">Công trình</option>
-            <option value="unit">Đơn vị kết cấu</option><option value="element">Cấu kiện</option></select></label>
-          <label>Thuộc<select name="parent_id"><option value="">(gốc)</option>${nodes.map((n) => `<option value="${n.id}">${esc(pathOf(n.id))}</option>`).join("")}</select></label>
-          <label>Loại kết cấu (khi là công trình)<select name="structure_type"><option value=""></option>${Object.entries(state.catalog.structure_types).map(([k, t]) => `<option value="${k}">${esc(t.name)}</option>`).join("")}</select></label>
-          <div class="form-row"><label>Mã<input name="code" required pattern="[A-Za-z0-9._-]+"></label><label>Tên<input name="name" required></label></div>
-          <div class="actions"><button class="primary" type="submit">Thêm</button></div></form>
-        <form class="panel" id="sensorForm"><h3>Thêm cảm biến</h3>
-          <div class="form-row"><label>Mã cảm biến<input name="code" required pattern="[A-Za-z0-9._-]+"></label>
-          <label>Loại<select name="sensor_type">${Object.entries(st).map(([k, t]) => `<option value="${k}">${esc(t.name)}</option>`).join("")}</select></label></div>
-          <label>Gắn tại<select name="node_id" required>${nodes.filter((n) => n.kind !== "port").map((n) => `<option value="${n.id}">${esc(pathOf(n.id))}</option>`).join("")}</select></label>
-          <div class="form-row"><label>Gateway<select name="gateway_id"><option value="">(không)</option>${gws.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select></label>
-          <label>Chu kỳ gửi (giây, 0 = theo sự kiện)<input name="expected_interval_s" type="number" min="0" value="600"></label></div>
-          <label>Vị trí lắp đặt<input name="location"></label>
-          <div class="actions"><button class="primary" type="submit">Thêm cảm biến</button></div>
-          <p class="small muted">Kênh mặc định tạo theo loại cảm biến; chỉnh hiệu chuẩn sau bằng nút tên kênh.</p></form>
-      </div>
+      <form class="panel" id="sensorForm"><div class="panel-head"><h3>Thêm cảm biến</h3>
+          <button type="button" class="link small" id="goCatalog">Chưa có công trình / hạng mục? Khai báo ở tab Danh mục công trình →</button></div>
+        <div class="sensor-grid">
+          <fieldset class="place"><legend>Vị trí lắp thiết bị</legend>
+            <label>Loại công trình<select id="sfType"></select></label>
+            <label>Công trình<select id="sfStructure"></select></label>
+            <label>Hạng mục / cấu kiện<select name="node_id" id="sfNode" required></select></label>
+            <p class="small muted" id="sfPath"></p>
+            <label>Mô tả vị trí lắp đặt<input name="location" placeholder="ví dụ đầu cọc C12, mép trước, cao độ +2,0 m"></label>
+          </fieldset>
+          <fieldset><legend>Thiết bị</legend>
+            <div class="form-row"><label>Mã cảm biến<input name="code" required pattern="[A-Za-z0-9._-]+" placeholder="ví dụ WH-B02-N1-TL1"></label>
+            <label>Loại cảm biến<select name="sensor_type">${Object.entries(st).map(([k, t]) => `<option value="${k}">${esc(t.name)}</option>`).join("")}</select></label></div>
+            <div class="form-row"><label>Gateway<select name="gateway_id"><option value="">(không)</option>${gws.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select></label>
+            <label>Chu kỳ gửi (giây, 0 = theo sự kiện)<input name="expected_interval_s" type="number" min="0" value="600"></label></div>
+            <p class="small muted" id="sfChannels"></p>
+          </fieldset>
+        </div>
+        <div class="actions"><button class="primary" type="submit">Thêm cảm biến</button>
+          <span class="small muted">Kênh mặc định tạo theo loại cảm biến; chỉnh hiệu chuẩn sau bằng nút tên kênh trong danh mục.</span></div></form>
       <form class="panel hidden" id="chForm"><h3>Hiệu chỉnh kênh <span id="chName"></span></h3>
         <p class="small muted">Hiệu chỉnh mới chỉ áp dụng cho số liệu nhận sau khi lưu. Dải đo theo đơn vị kênh sau hiệu chỉnh.</p>
         <div class="form-row">
@@ -1353,21 +1355,51 @@
       catch (e) { toast(e.message, true); b.disabled = false; }
     });
     const numOrNull = (x) => x === "" || x === null ? null : Number(x);
-    $("#nodeForm").onsubmit = async (ev) => {
-      ev.preventDefault();
-      const f = Object.fromEntries(new FormData(ev.target));
-      const body = { kind: f.kind, code: f.code, name: f.name, parent_id: numOrNull(f.parent_id) };
-      if (f.kind === "structure") body.structure_type = f.structure_type || null;
-      try { await apiCall("/api/nodes", "POST", body); toast("Đã thêm"); state.structures = await apiCall("/api/structures"); route(); }
-      catch (e) { toast(e.message, true); }
+    // vị trí lắp: loại công trình → công trình → hạng mục / cấu kiện (công trình, hạng mục khai báo ở tab Danh mục công trình)
+    const sfSub = state.sub.sensors || (state.sub.sensors = {});
+    const kidsOf = (id) => nodes.filter((n) => n.parent_id === id).sort((x, y) => x.sort_order - y.sort_order || x.code.localeCompare(y.code));
+    const usedTypes = Object.entries(state.catalog.structure_types).filter(([k]) => nodes.some((n) => n.kind === "structure" && n.structure_type === k));
+    const sfType = $("#sfType"), sfStructure = $("#sfStructure"), sfNode = $("#sfNode");
+    const opt = (v, l, sel) => `<option value="${esc(v)}" ${sel ? "selected" : ""}>${esc(l)}</option>`;
+    const fillNodes = () => {
+      const sid = Number(sfStructure.value), stc = byId[sid];
+      if (!stc) { sfNode.innerHTML = opt("", "(chưa có công trình)"); sfNode.disabled = true; $("#sfPath").textContent = ""; return; }
+      sfNode.disabled = false;
+      const unitName = state.catalog.structure_types[stc.structure_type]?.unit_name || "Hạng mục";
+      const rows = [[stc.id, `Toàn công trình – ${stc.name}`]];
+      const walk = (id, depth) => kidsOf(id).forEach((n) => { rows.push([n.id, `${"\u00a0\u00a0".repeat(depth)}${depth ? "└ " : ""}${n.name} (${n.code})`]); walk(n.id, depth + 1); });
+      walk(stc.id, 0);
+      if (!rows.some(([id]) => id === sfSub.node)) sfSub.node = rows[1]?.[0] ?? stc.id;
+      sfNode.innerHTML = rows.map(([id, l]) => opt(id, l, id === sfSub.node)).join("");
+      const nk = kidsOf(stc.id).length;
+      $("#sfPath").textContent = nk ? `${nk} ${unitName.toLowerCase()} · đang chọn: ${pathOf(Number(sfNode.value))}` : `Công trình chưa có ${unitName.toLowerCase()} – cảm biến gắn cho toàn công trình, hoặc thêm ${unitName.toLowerCase()} ở tab Danh mục công trình.`;
     };
+    const fillStructures = () => {
+      const list = nodes.filter((n) => n.kind === "structure" && n.structure_type === sfType.value).sort((x, y) => x.sort_order - y.sort_order || x.code.localeCompare(y.code));
+      if (!list.some((n) => n.id === sfSub.structure)) sfSub.structure = list[0]?.id;
+      sfStructure.innerHTML = list.length ? list.map((n) => opt(n.id, `${n.name} (${n.code})`, n.id === sfSub.structure)).join("") : opt("", "(chưa có công trình loại này)");
+      sfStructure.disabled = !list.length;
+      fillNodes();
+    };
+    if (!usedTypes.some(([k]) => k === sfSub.type)) sfSub.type = usedTypes[0]?.[0];
+    sfType.innerHTML = usedTypes.length ? Object.entries(state.catalog.groups).map(([g, gname]) => {
+      const it = usedTypes.filter(([, t]) => t.group === g);
+      return it.length ? `<optgroup label="${esc(gname)}">${it.map(([k, t]) => opt(k, t.name, k === sfSub.type)).join("")}</optgroup>` : "";
+    }).join("") : opt("", "(chưa có công trình nào)");
+    sfType.onchange = () => { sfSub.type = sfType.value; sfSub.structure = null; fillStructures(); };
+    sfStructure.onchange = () => { sfSub.structure = Number(sfStructure.value); sfSub.node = null; fillNodes(); };
+    sfNode.onchange = () => { sfSub.node = Number(sfNode.value); fillNodes(); };
+    fillStructures();
+    const sfCh = () => { const t = st[$("#sensorForm [name=sensor_type]").value]; $("#sfChannels").textContent = t ? `Kênh tạo sẵn: ${t.channels.map((c) => `${c} (${unitLabel(t.channel_units?.[c] ?? t.unit)})`).join(", ")}` : ""; };
+    $("#sensorForm [name=sensor_type]").onchange = sfCh; sfCh();
+    $("#goCatalog").onclick = () => { state.tab = "catalog"; try { localStorage.setItem("shm_tab", "catalog"); } catch {} renderTabs(); route(); };
     $("#sensorForm").onsubmit = async (ev) => {
       ev.preventDefault();
       const f = Object.fromEntries(new FormData(ev.target));
       try {
         await apiCall("/api/sensors", "POST", { code: f.code, sensor_type: f.sensor_type, node_id: Number(f.node_id),
           gateway_id: numOrNull(f.gateway_id), expected_interval_s: Number(f.expected_interval_s || 0), location: f.location });
-        toast("Đã thêm cảm biến"); route();
+        toast(`Đã thêm cảm biến ${f.code} tại ${pathOf(Number(f.node_id))}`); route();
       } catch (e) { toast(e.message, true); }
     };
     const chForm = $("#chForm");
